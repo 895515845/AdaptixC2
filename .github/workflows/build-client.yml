@@ -42,50 +42,78 @@ jobs:
           path: AdaptixC2
           ref: ${{ github.ref }}
 
-      # 🐧 Linux 依赖修复: 增加了 qt6-declarative-dev (用于QML)
+      # 🐧 Linux: 补充缺失的 XKB 和 X11 依赖
       - name: Install dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake qt6-base-dev qt6-websockets-dev qt6-tools-dev libgl1-mesa-dev qt6-declarative-dev
+          sudo apt-get install -y build-essential cmake qt6-base-dev qt6-websockets-dev qt6-tools-dev libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb-xkb-dev libxcb-icccm4-dev libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev libxcb-render0-dev libxcb-shape0-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev x11-xserver-utils
 
-      # 🍎/🪟 安装 Qt: 增加了 tools: 'tools_mingw' 以获取正确的编译器
-      - name: Install Qt (macOS/Windows)
-        if: runner.os != 'Linux'
+      # 🍎 macOS: 仅安装 Qt 基础库，不请求 MinGW
+      - name: Install Qt (macOS)
+        if: matrix.os == 'macos-latest'
         uses: jurplel/install-qt-action@v3
         with:
           version: '6.5.3'
-          host: ${{ matrix.os_name == 'windows' && 'windows' || 'mac' }}
+          host: 'mac'
           target: 'desktop'
-          arch: ${{ matrix.os_name == 'windows' && 'win64_mingw' || 'clang_64' }}
+          arch: 'clang_64'
           dir: '${{ github.workspace }}/qt/'
           install-deps: 'true'
           modules: 'qtwebsockets'
-          # 关键修正：显式安装 MinGW 工具链，防止使用系统自带的旧版 GCC
-          tools: 'tools_mingw' 
 
-      # 🪟 Windows 编译器路径修正
-      # 我们不手动加 PATH，而是直接检查 verify，install-qt-action 会自动处理好环境
-      - name: Check Compiler (Windows)
+      # 🪟 Windows: 必须请求 MinGW 工具链
+      - name: Install Qt (Windows)
         if: matrix.os == 'windows-latest'
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.5.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw'
+          dir: '${{ github.workspace }}/qt/'
+          install-deps: 'true'
+          modules: 'qtwebsockets'
+          tools: 'tools_mingw' # 👈 仅在 Windows 启用这个
+
+      # 🪟 Windows: 关键修正 - 查找正确的 Qt 编译器并清理 PATH
+      - name: Setup Windows Environment
+        if: matrix.os == 'windows-latest'
+        id: win_env
+        shell: pwsh
         run: |
-          gcc --version
-          g++ --version
-          where gcc
-          where mingw32-make
+          # 1. 找到 Qt 安装的 MinGW 路径 (通常在 Tools 目录下)
+          $qtToolsPath = Get-ChildItem -Path "${{ github.workspace }}\qt\Tools" -Filter "mingw*" -Directory | Select-Object -First 1
+          if (-not $qtToolsPath) { throw "Could not find Qt MinGW tools" }
+          $mingwBin = Join-Path $qtToolsPath.FullName "bin"
+          
+          echo "Found Qt MinGW at: $mingwBin"
+          
+          # 2. 将正确的路径加入 GITHUB_ENV 供后续使用
+          echo "QT_MINGW_BIN=$mingwBin" >> $env:GITHUB_ENV
+          
+          # 3. 将其加到 PATH 最前面
+          echo "$mingwBin" >> $env:GITHUB_PATH
+          
+          # 4. 彻底屏蔽系统自带的 MinGW (这是最关键的一步)
+          # 我们把 C:\mingw64 重命名，确保 CMake 绝对找不到它
+          if (Test-Path "C:\mingw64") {
+            Rename-Item -Path "C:\mingw64" -NewName "C:\mingw64_backup"
+            echo "Disabled system MinGW at C:\mingw64"
+          }
 
       - name: Configure CMake
         shell: bash
         run: |
           cd AdaptixC2/AdaptixClient
           
-          # Windows 下强制指定 CMake 参数，防止它去找 C:/mingw64
           if [ "${{ matrix.os_name }}" == "windows" ]; then
+             # 显式指定编译器路径，双重保险
              cmake -B build -G "${{ matrix.cmake_gen }}" \
                    -DCMAKE_BUILD_TYPE=Release \
-                   -DCMAKE_C_COMPILER=gcc \
-                   -DCMAKE_CXX_COMPILER=g++ \
-                   -DCMAKE_MAKE_PROGRAM=mingw32-make
+                   -DCMAKE_C_COMPILER="$QT_MINGW_BIN/gcc.exe" \
+                   -DCMAKE_CXX_COMPILER="$QT_MINGW_BIN/g++.exe" \
+                   -DCMAKE_MAKE_PROGRAM="$QT_MINGW_BIN/mingw32-make.exe"
           else
              cmake -B build -G "${{ matrix.cmake_gen }}" -DCMAKE_BUILD_TYPE=Release
           fi
@@ -109,9 +137,10 @@ jobs:
           mkdir -p release-package
           # macOS 兼容性处理
           if [ "${{ matrix.os_name }}" == "macos" ]; then
-             # 尝试拷贝 .app 或者二进制文件
              if [ -d "build/AdaptixClient.app" ]; then
-                 cp -r build/AdaptixClient.app release-package/
+                 # 如果生成的是 .app 包，我们只取里面的二进制，或者你可以改为打包整个 .app
+                 # 为了跨平台统一，这里尝试取二进制
+                 cp -r build/AdaptixClient.app/Contents/MacOS/AdaptixClient release-package/ 2>/dev/null || cp -r build/AdaptixClient.app release-package/
              else
                  cp build/AdaptixClient release-package/ 2>/dev/null || true
              fi
@@ -140,8 +169,10 @@ jobs:
           
           if (Test-Path $exePath) {
             Copy-Item $exePath "release-package/"
-            # 自动部署 Qt 依赖 DLL
+            # 关键：部署依赖时需要显式指明 bin 目录，否则 windeployqt 可能会去系统目录找
+            $env:PATH = "$env:QT_MINGW_BIN;" + $env:PATH
             windeployqt --release --no-translations --no-system-d3d-compiler "release-package/AdaptixClient.exe"
+            
             Compress-Archive -Path "release-package/*" -DestinationPath "AdaptixClient-windows-${VERSION}.zip"
           } else {
             Write-Warning "AdaptixClient.exe not found, skipping packaging."
