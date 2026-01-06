@@ -33,16 +33,22 @@ jobs:
           path: AdaptixC2
           ref: ${{ github.ref }}
 
-      # 安装系统 Qt6 和必要依赖（系统自带 Qt 6.8.x）
+      # 启用 universe 仓库并安装系统 Qt6 完整依赖（包括 private headers）
       - name: Install System Qt6 and Dependencies
         run: |
           sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository universe -y
+          sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake \
-            qt6-base-dev qt6-websockets-dev qt6-declarative-dev \
-            libgl1-mesa-dev libxkbcommon-x11-0 libxcb-* libvulkan1
+            qt6-base-dev qt6-base-private-dev \
+            qt6-websockets-dev qt6-declarative-dev \
+            libgl1-mesa-dev libvulkan1 \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libxcb-*
 
-      # 配置 CMake（系统 Qt 会自动被找到）
+      # 配置 CMake
       - name: Configure CMake
         run: |
           cd AdaptixC2/AdaptixClient
@@ -123,7 +129,7 @@ jobs:
             - `AdaptixClient-linux-${{ env.VERSION }}.zip`
             
             ### 说明
-            - 基于系统 Qt 6.8.x（Ubuntu 自带 LTS 版本）构建。
-            - 直接可运行于 Ubuntu/Debian 等现代 Linux 发行版。
+            - 基于 Ubuntu 自带 Qt 6.8.x LTS 构建（包含 private headers）。
+            - 直接运行于现代 Linux 发行版。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
