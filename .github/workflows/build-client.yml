@@ -1,5 +1,4 @@
 name: Build AdaptixClient (Linux Only)
-
 on:
   push:
     branches: [ main ]
@@ -27,7 +26,6 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,65 +33,40 @@ jobs:
           path: AdaptixC2
           ref: ${{ github.ref }}
 
-      # 1. 清理环境 & 安装底层依赖
-      - name: Install System Dependencies
+      # 安装基础构建工具（CMake、build-essential 等）
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          # 卸载系统 Qt 防止冲突
-          sudo apt-get remove -y qt6-base-dev qt6-base-private-dev libqt6* || true
-          sudo apt-get autoremove -y
-          
-          # 安装 Qt 运行需要的底层库
-          sudo apt-get install -y \
-            build-essential git cmake libssl-dev libgl1-mesa-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev \
-            libxcb-xkb-dev libxcb-icccm4-dev libxcb-image0-dev \
-            libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-sync-dev \
-            libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev \
-            x11-xserver-utils python3-pip
+          sudo apt-get install -y build-essential cmake libgl1-mesa-dev libxkbcommon-x11-0 libxcb-* python3-pip
 
-      # 2. 手动安装 Qt 6.7.2 (指定镜像源)
-      # ⚠️ 关键：增加 --base 参数使用 kernel.org 镜像，解决 XML 解析失败问题
-      - name: Install Qt 6.7.2 (Manual with Mirror)
-        run: |
-          pip3 install aqtinstall --break-system-packages
-          
-          mkdir -p ${{ github.workspace }}/qt
-          
-          # 使用 Kernel.org 镜像源，比官方源稳定得多
-          python3 -m aqt install-qt linux desktop 6.7.2 gcc_64 \
-            --base https://mirrors.kernel.org/qt \
-            --outputdir ${{ github.workspace }}/qt \
-            --modules qtwebsockets
-          
-          # 配置环境变量
-          QT_PATH=${{ github.workspace }}/qt/6.7.2/gcc_64
-          echo "Qt6_DIR=$QT_PATH" >> $GITHUB_ENV
-          echo "QT_PLUGIN_PATH=$QT_PATH/plugins" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=$QT_PATH/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-          echo "PATH=$QT_PATH/bin:$PATH" >> $GITHUB_ENV
+      # 使用官方 action 安装 Qt（推荐方式，自动缓存 + 处理镜像问题）
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.1'          # 2026年1月最新版本（可换成 6.8.0 等 LTS）
+          host: linux
+          target: desktop
+          arch: gcc_64
+          modules: qtwebsockets      # 你需要的模块
+          cached: true               # 启用缓存，第二次运行只需几秒
+          cache-key: qt-6.10.1-linux # 可自定义缓存键
 
-      # 3. 配置 CMake
+      # 配置 CMake（action 已自动设置 Qt6_DIR 和 PATH）
       - name: Configure CMake
-        shell: bash
         run: |
           cd AdaptixC2/AdaptixClient
-          
-          echo "Using Qt at: $Qt6_DIR"
-          
-          # 强制指定我们下载的 Qt 路径
           cmake -B build -G "Unix Makefiles" \
                 -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_PREFIX_PATH=$Qt6_DIR \
                 -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" \
                 -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG"
 
+      # 构建（增加并行度加速）
       - name: Build AdaptixClient
         run: |
           cd AdaptixC2/AdaptixClient
-          cmake --build build --config Release --parallel 2
+          cmake --build build --config Release --parallel $(nproc)
 
+      # 准备发布包
       - name: Prepare release package
         run: |
           cd AdaptixC2/AdaptixClient
@@ -104,11 +77,12 @@ jobs:
           fi
           
           mkdir -p release-package
-          cp build/AdaptixClient release-package/ 2>/dev/null || true
+          cp build/AdaptixClient release-package/
           
           tar -czf AdaptixClient-linux-${VERSION}.tar.gz -C release-package .
           zip -r AdaptixClient-linux-${VERSION}.zip release-package/*
 
+      # 上传 artifact
       - name: Upload release archives
         uses: actions/upload-artifact@v4
         with:
@@ -122,7 +96,6 @@ jobs:
     needs: build-linux
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -159,6 +132,6 @@ jobs:
             - `AdaptixClient-linux-${{ env.VERSION }}.zip`
             
             ### 说明
-            - 基于 Qt 6.7.2 构建 (使用镜像源)。
+            - 基于 Qt 6.10.1 构建（最新版本）。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
