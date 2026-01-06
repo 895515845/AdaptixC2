@@ -36,6 +36,7 @@ jobs:
             os_name: windows
             cmake_gen: "MinGW Makefiles"
 
+    timeout-minutes: 120
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -89,20 +90,22 @@ jobs:
           cd AdaptixC2/AdaptixClient
           
           if [ "${{ matrix.os_name }}" == "windows" ]; then
-             # Windows
              cmake -B build -G "${{ matrix.cmake_gen }}" \
                    -DCMAKE_BUILD_TYPE=Release \
+                   -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" \
+                   -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG" \
                    -DCMAKE_MAKE_PROGRAM="mingw32-make"
           else
-             # Linux (使用 install-qt-action 后，环境变量会自动配置好)
              cmake -B build -G "${{ matrix.cmake_gen }}" \
-                   -DCMAKE_BUILD_TYPE=Release
+                   -DCMAKE_BUILD_TYPE=Release \
+                   -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" \
+                   -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG"
           fi
 
       - name: Build AdaptixClient
         run: |
           cd AdaptixC2/AdaptixClient
-          cmake --build build --config Release --parallel
+          cmake --build build --config Release --parallel 2
 
       # 📦 打包逻辑 (Linux)
       - name: Prepare release package (Linux)
