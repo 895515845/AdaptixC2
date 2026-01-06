@@ -35,16 +35,15 @@ jobs:
           path: AdaptixC2
           ref: ${{ github.ref }}
 
-      # 🟢 关键步骤 1：安装系统依赖，但【绝对不要】安装 qt6-base-dev
-      # 另外，我们主动卸载可能存在的系统 Qt，防止头文件冲突
+      # 1. 安装系统底层依赖 (移除旧Qt，安装OpenGL等)
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          # 卸载系统自带的 Qt6，防止干扰
+          # 卸载系统 Qt 防止冲突
           sudo apt-get remove -y qt6-base-dev qt6-base-private-dev libqt6* || true
           sudo apt-get autoremove -y
           
-          # 安装编译需要的底层库 (OpenGL, X11, XKB 等)
+          # 安装编译环境
           sudo apt-get install -y \
             build-essential git cmake libssl-dev libgl1-mesa-dev \
             libxkbcommon-dev libxkbcommon-x11-dev \
@@ -52,27 +51,39 @@ jobs:
             libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-sync-dev \
             libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev \
-            x11-xserver-utils
+            x11-xserver-utils python3-pip
 
-      # 🟢 关键步骤 2：使用 6.8.0 版本 (支持 setColorScheme)
-      - name: Install Qt 6.8.0
-        uses: jurplel/install-qt-action@v3
-        with:
-          version: '6.8.0'
-          host: 'linux'
-          target: 'desktop'
-          arch: 'gcc_64'
-          dir: '${{ github.workspace }}/qt/'
-          install-deps: 'true'
-          modules: 'qtwebsockets'
+      # 2. 手动安装 Qt 6.8.0 (避开插件 Bug)
+      # 使用 aqtinstall 直接从官方源拉取
+      - name: Install Qt 6.8.0 (Manual)
+        run: |
+          # 安装安装器
+          pip3 install aqtinstall --break-system-packages
+          
+          # 创建安装目录
+          mkdir -p ${{ github.workspace }}/qt
+          
+          # 执行安装命令 (明确指定 Linux Desktop 6.8.0 gcc_64)
+          # 注意：有时候 .0 版本在镜像中不稳定，我们先试 6.8.0，如果不行再换 6.8.1
+          python3 -m aqt install-qt linux desktop 6.8.0 gcc_64 \
+            --outputdir ${{ github.workspace }}/qt \
+            --modules qtwebsockets
+          
+          # 设置环境变量供后续步骤使用
+          QT_PATH=${{ github.workspace }}/qt/6.8.0/gcc_64
+          echo "Qt6_DIR=$QT_PATH" >> $GITHUB_ENV
+          echo "QT_PLUGIN_PATH=$QT_PATH/plugins" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$QT_PATH/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "PATH=$QT_PATH/bin:$PATH" >> $GITHUB_ENV
 
+      # 3. 配置 CMake
       - name: Configure CMake
         shell: bash
         run: |
           cd AdaptixC2/AdaptixClient
           
-          # 🟢 关键步骤 3：强制 CMAKE_PREFIX_PATH 指向我们安装的 Qt
-          # 这样 CMake 就绝对不会去找系统的旧头文件了
+          echo "Using Qt at: $Qt6_DIR"
+          
           cmake -B build -G "Unix Makefiles" \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCMAKE_PREFIX_PATH=$Qt6_DIR \
@@ -149,7 +160,7 @@ jobs:
             - `AdaptixClient-linux-${{ env.VERSION }}.zip`
             
             ### 说明
-            - 该版本专为 **Linux** 构建 (基于 Qt 6.8.0)。
-            - 请确保系统安装了基础 OpenGL/X11 库。
+            - 该版本专为 **Linux** 构建 (Qt 6.8.0)。
+            - 包含 `setColorScheme` 支持。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
