@@ -2,7 +2,7 @@ name: Build All and Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
     tags:
       - 'v*'
   workflow_dispatch:
@@ -33,7 +33,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y mingw-w64 make gcc g++ g++-mingw-w64 wget git
 
-      # 修正：Go 1.25 尚未发布，改为当前最新的稳定版 1.23.4 以防 404
       - name: Install Go
         run: |
           wget https://go.dev/dl/go1.23.4.linux-amd64.tar.gz -O /tmp/go.tar.gz
@@ -55,7 +54,6 @@ jobs:
       - name: Package Server
         run: |
           cd AdaptixC2
-          # 确定版本号
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
           else
@@ -88,7 +86,6 @@ jobs:
         with:
           path: AdaptixC2
 
-      # 使用系统源安装 Qt 6 (最稳妥的 Linux 方案)
       - name: Install Qt6 Dependencies
         run: |
           sudo apt-get update
@@ -158,7 +155,6 @@ jobs:
       - name: Install CMake
         uses: lukka/get-cmake@v3.30.5
 
-      # 使用你确认可用的 Qt 6.9.1 (注意：如果是预览版可能不稳定，如下载失败请降级到 6.8.0)
       - name: Install Qt MinGW
         uses: jurplel/install-qt-action@v4
         with:
@@ -212,21 +208,72 @@ jobs:
           path: AdaptixC2/AdaptixClient/*.zip
 
   # ========================================================
-  # 4. 发布 Release (汇总所有产物)
+  # 4. 构建 Client (macOS) - 🟢 新增
+  # ========================================================
+  build-client-macos:
+    name: Build Client (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          path: AdaptixC2
+
+      - name: Install dependencies
+        run: |
+          brew install make cmake openssl qt@6
+
+      - name: Build AdaptixClient
+        run: |
+          cd AdaptixC2
+          make client
+
+      - name: Package application
+        run: |
+          cd AdaptixC2
+          APP_NAME="AdaptixClient"
+          
+          # 统一版本号逻辑
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="latest"
+          fi
+          
+          ZIP_NAME="${APP_NAME}-macOS-${VERSION}.zip"
+          
+          # 假设 make client 生成的文件在 dist 目录下
+          cd dist
+          if [ -d "${APP_NAME}.app" ]; then
+            zip -r "${ZIP_NAME}" "${APP_NAME}.app"
+          elif [ -f "${APP_NAME}" ]; then
+            zip -r "${ZIP_NAME}" "${APP_NAME}"
+          else
+            zip -r "${ZIP_NAME}" .
+          fi
+          
+          echo "ZIP_FILE=${ZIP_NAME}" >> $GITHUB_ENV
+
+      - name: Upload macOS Client Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-client-macos
+          path: AdaptixC2/dist/${{ env.ZIP_FILE }}
+
+  # ========================================================
+  # 5. 发布 Release (汇总所有产物)
   # ========================================================
   release:
     name: Create Release
-    needs: [build-server, build-client-linux, build-client-windows]
+    # 🟢 增加 build-client-macos 到依赖列表
+    needs: [build-server, build-client-linux, build-client-windows, build-client-macos]
     runs-on: ubuntu-latest
-    # 🟢 修正：增加了 || github.ref == 'refs/heads/main'
-    # 这样你只要提交代码，就会自动发布 Release (Tag 名为 latest)
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true') || github.ref == 'refs/heads/main'
     
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 下载所有 Job 上传的产物到当前目录
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -272,7 +319,10 @@ jobs:
             - `AdaptixClient-linux-${{ env.VERSION }}.zip`
             
             ### 🪟 Client (Windows)
-            - `AdaptixClient-windows-${{ env.VERSION }}.zip` (Portable, 解压即用)
+            - `AdaptixClient-windows-${{ env.VERSION }}.zip`
+            
+            ### 🍎 Client (macOS)
+            - `AdaptixClient-macOS-${{ env.VERSION }}.zip`
             
             > **注意**: 如果这是手动构建，版本号将显示为 `latest`。
         env:
