@@ -1,0 +1,51 @@
+name: Build AdaptixServer with Extenders
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: AdaptixC2
+          repository: 895515845/AdaptixC2  # 如果是 fork，请改为你的用户名/AdaptixC2
+          ref: main
+
+      - name: Set up environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 make gcc g++ g++-mingw-w64 wget git
+      - name: Install specific Go version (1.25.4)
+        run: |
+          wget https://go.dev/dl/go1.25.4.linux-amd64.tar.gz -O /tmp/go.tar.gz
+          sudo rm -rf /usr/local/go
+          sudo tar -C /usr/local -xzf /tmp/go.tar.gz
+          echo "/usr/local/go/bin" >> $GITHUB_PATH
+      - name: Clone patched Go for Windows 7 support (gopher agent)
+        run: |
+          git clone https://github.com/Adaptix-Framework/go-win7 /tmp/go-win7
+          sudo mv /tmp/go-win7 /usr/lib/go-win7
+      - name: Build server and extenders (equivalent to make server-ext)
+        run: |
+          cd AdaptixC2
+          make server-ext
+          make extenders || make all || make
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptixserver-and-extenders
+          path: |
+            AdaptixC2/dist/adaptixserver
+            AdaptixC2/dist/extenders/
+            AdaptixC2/dist/*.json
+            AdaptixC2/dist/ssl_gen.sh
+            AdaptixC2/dist/404page.html
+          if-no-files-found: warn
