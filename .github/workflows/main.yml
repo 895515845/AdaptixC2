@@ -314,16 +314,15 @@ jobs:
             - `AdaptixServer-${{ env.VERSION }}.tar.gz`
             - `AdaptixServer-${{ env.VERSION }}.zip`
             
-            ### 💻 Client (Linux)
+            ### 🐧 Client (Linux)
             - `AdaptixClient-linux-${{ env.VERSION }}.tar.gz`
             - `AdaptixClient-linux-${{ env.VERSION }}.zip`
             
-            ### 🪟 Client (Windows)
+            ### 💻 Client (Windows)
             - `AdaptixClient-windows-${{ env.VERSION }}.zip`
             
             ### 🍎 Client (macOS)
             - `AdaptixClient-macOS-${{ env.VERSION }}.zip`
             
-            > **注意**: 如果这是手动构建，版本号将显示为 `latest`。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
