@@ -35,15 +35,15 @@ jobs:
           path: AdaptixC2
           ref: ${{ github.ref }}
 
-      # 1. 清理环境并安装底层依赖
-      # ⚠️ 关键：卸载系统自带的 Qt6 (版本通常是 6.4，不支持 setColorScheme)，防止 CMake 找错
+      # 1. 清理环境 & 安装底层依赖
       - name: Install System Dependencies
         run: |
           sudo apt-get update
+          # 卸载系统 Qt 防止冲突
           sudo apt-get remove -y qt6-base-dev qt6-base-private-dev libqt6* || true
           sudo apt-get autoremove -y
           
-          # 安装 Qt 运行需要的底层库 (X11, OpenGL, XKB 等)
+          # 安装 Qt 运行需要的底层库
           sudo apt-get install -y \
             build-essential git cmake libssl-dev libgl1-mesa-dev \
             libxkbcommon-dev libxkbcommon-x11-dev \
@@ -53,20 +53,112 @@ jobs:
             libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev \
             x11-xserver-utils python3-pip
 
-      # 2. 手动安装 Qt 6.7.2
-      # 🟢 改用 6.7.2，这个版本非常稳定，且支持 setColorScheme (6.5+即可)
-      - name: Install Qt 6.7.2 (Manual)
+      # 2. 手动安装 Qt 6.7.2 (指定镜像源)
+      # ⚠️ 关键：增加 --base 参数使用 kernel.org 镜像，解决 XML 解析失败问题
+      - name: Install Qt 6.7.2 (Manual with Mirror)
         run: |
           pip3 install aqtinstall --break-system-packages
           
           mkdir -p ${{ github.workspace }}/qt
           
-          # 下载 Qt 6.7.2 (Linux Desktop gcc_64)
+          # 使用 Kernel.org 镜像源，比官方源稳定得多
           python3 -m aqt install-qt linux desktop 6.7.2 gcc_64 \
+            --base https://mirrors.kernel.org/qt \
             --outputdir ${{ github.workspace }}/qt \
             --modules qtwebsockets
           
-          # 设置环境变量
+          # 配置环境变量
           QT_PATH=${{ github.workspace }}/qt/6.7.2/gcc_64
           echo "Qt6_DIR=$QT_PATH" >> $GITHUB_ENV
-          echo "QT_PLUGIN_PATH=$QT_PATH/plugins" >>
+          echo "QT_PLUGIN_PATH=$QT_PATH/plugins" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$QT_PATH/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "PATH=$QT_PATH/bin:$PATH" >> $GITHUB_ENV
+
+      # 3. 配置 CMake
+      - name: Configure CMake
+        shell: bash
+        run: |
+          cd AdaptixC2/AdaptixClient
+          
+          echo "Using Qt at: $Qt6_DIR"
+          
+          # 强制指定我们下载的 Qt 路径
+          cmake -B build -G "Unix Makefiles" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_PREFIX_PATH=$Qt6_DIR \
+                -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" \
+                -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG"
+
+      - name: Build AdaptixClient
+        run: |
+          cd AdaptixC2/AdaptixClient
+          cmake --build build --config Release --parallel 2
+
+      - name: Prepare release package
+        run: |
+          cd AdaptixC2/AdaptixClient
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="latest"
+          fi
+          
+          mkdir -p release-package
+          cp build/AdaptixClient release-package/ 2>/dev/null || true
+          
+          tar -czf AdaptixClient-linux-${VERSION}.tar.gz -C release-package .
+          zip -r AdaptixClient-linux-${VERSION}.zip release-package/*
+
+      - name: Upload release archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-archives-linux
+          path: |
+            AdaptixC2/AdaptixClient/*.tar.gz
+            AdaptixC2/AdaptixClient/*.zip
+          if-no-files-found: warn
+
+  create-release:
+    needs: build-linux
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-archives-linux
+          path: release_final
+
+      - name: Set Environment
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="latest"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release_final/*
+          tag_name: ${{ env.VERSION }}
+          name: AdaptixClient Release ${{ env.VERSION }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## AdaptixClient Linux Release ${{ env.VERSION }}
+            
+            ### 📥 下载
+            - `AdaptixClient-linux-${{ env.VERSION }}.tar.gz`
+            - `AdaptixClient-linux-${{ env.VERSION }}.zip`
+            
+            ### 说明
+            - 基于 Qt 6.7.2 构建 (使用镜像源)。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
