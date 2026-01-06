@@ -33,25 +33,16 @@ jobs:
           path: AdaptixC2
           ref: ${{ github.ref }}
 
-      # 安装基础构建工具和运行时依赖
-      - name: Install Build Dependencies
+      # 安装系统 Qt6 和必要依赖（系统自带 Qt 6.8.x）
+      - name: Install System Qt6 and Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake libgl1-mesa-dev libxkbcommon-x11-0 libxcb-* libvulkan1
+          sudo apt-get install -y \
+            build-essential cmake \
+            qt6-base-dev qt6-websockets-dev qt6-declarative-dev \
+            libgl1-mesa-dev libxkbcommon-x11-0 libxcb-* libvulkan1
 
-      # 使用官方推荐 action 安装 Qt 6.8.3（LTS，稳定可靠）
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.3'           # 当前最推荐的 LTS 版本
-          host: linux
-          target: desktop
-          arch: gcc_64
-          modules: qtwebsockets      # AdaptixClient 所需模块
-          cached: true               # 启用缓存，后续构建只需几秒
-          cache-key: qt-6.8.3-linux  # 缓存键，可自行修改
-
-      # 配置 CMake（action 已自动设置 Qt 路径和环境变量）
+      # 配置 CMake（系统 Qt 会自动被找到）
       - name: Configure CMake
         run: |
           cd AdaptixC2/AdaptixClient
@@ -60,7 +51,7 @@ jobs:
                 -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" \
                 -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG"
 
-      # 构建（使用所有 CPU 核心加速）
+      # 构建
       - name: Build AdaptixClient
         run: |
           cd AdaptixC2/AdaptixClient
@@ -82,7 +73,7 @@ jobs:
           tar -czf AdaptixClient-linux-${VERSION}.tar.gz -C release-package .
           zip -r AdaptixClient-linux-${VERSION}.zip release-package/*
 
-      # 上传构建产物
+      # 上传 artifact
       - name: Upload release archives
         uses: actions/upload-artifact@v4
         with:
@@ -132,7 +123,7 @@ jobs:
             - `AdaptixClient-linux-${{ env.VERSION }}.zip`
             
             ### 说明
-            - 基于 Qt 6.8.3 LTS 构建（稳定、长期支持）。
-            - 适用于 Ubuntu/Debian 等 Linux 发行版。
+            - 基于系统 Qt 6.8.x（Ubuntu 自带 LTS 版本）构建。
+            - 直接可运行于 Ubuntu/Debian 等现代 Linux 发行版。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
