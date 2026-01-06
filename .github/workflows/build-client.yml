@@ -60,12 +60,12 @@ jobs:
             libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev \
             x11-xserver-utils
 
-      # 📦 统一安装 Qt 6.8.1 (Windows 和 Linux)
-      # 解决了 setColorScheme 在老版本不存在的问题
-      - name: Install Qt 6.8
+      # 📦 统一安装 Qt 6.6.3 (Windows 和 Linux)
+      # 使用更稳定的版本，解决安装问题
+      - name: Install Qt 6.6
         uses: jurplel/install-qt-action@v3
         with:
-          version: '6.8.1'           # 🟢 升级到 6.8.1 以支持 setColorScheme
+          version: '6.6.3'           # 🟢 使用稳定的6.6.3版本
           host: ${{ matrix.os_name == 'windows' && 'windows' || 'linux' }}
           target: 'desktop'
           arch: ${{ matrix.os_name == 'windows' && 'win64_mingw' || 'gcc_64' }}
