@@ -33,25 +33,25 @@ jobs:
           path: AdaptixC2
           ref: ${{ github.ref }}
 
-      # 安装基础构建工具（CMake、build-essential 等）
+      # 安装基础构建工具和运行时依赖
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake libgl1-mesa-dev libxkbcommon-x11-0 libxcb-* python3-pip
+          sudo apt-get install -y build-essential cmake libgl1-mesa-dev libxkbcommon-x11-0 libxcb-* libvulkan1
 
-      # 使用官方 action 安装 Qt（推荐方式，自动缓存 + 处理镜像问题）
+      # 使用官方推荐 action 安装 Qt 6.8.3（LTS，稳定可靠）
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.10.1'          # 2026年1月最新版本（可换成 6.8.0 等 LTS）
+          version: '6.8.3'           # 当前最推荐的 LTS 版本
           host: linux
           target: desktop
           arch: gcc_64
-          modules: qtwebsockets      # 你需要的模块
-          cached: true               # 启用缓存，第二次运行只需几秒
-          cache-key: qt-6.10.1-linux # 可自定义缓存键
+          modules: qtwebsockets      # AdaptixClient 所需模块
+          cached: true               # 启用缓存，后续构建只需几秒
+          cache-key: qt-6.8.3-linux  # 缓存键，可自行修改
 
-      # 配置 CMake（action 已自动设置 Qt6_DIR 和 PATH）
+      # 配置 CMake（action 已自动设置 Qt 路径和环境变量）
       - name: Configure CMake
         run: |
           cd AdaptixC2/AdaptixClient
@@ -60,7 +60,7 @@ jobs:
                 -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" \
                 -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG"
 
-      # 构建（增加并行度加速）
+      # 构建（使用所有 CPU 核心加速）
       - name: Build AdaptixClient
         run: |
           cd AdaptixC2/AdaptixClient
@@ -82,7 +82,7 @@ jobs:
           tar -czf AdaptixClient-linux-${VERSION}.tar.gz -C release-package .
           zip -r AdaptixClient-linux-${VERSION}.zip release-package/*
 
-      # 上传 artifact
+      # 上传构建产物
       - name: Upload release archives
         uses: actions/upload-artifact@v4
         with:
@@ -132,6 +132,7 @@ jobs:
             - `AdaptixClient-linux-${{ env.VERSION }}.zip`
             
             ### 说明
-            - 基于 Qt 6.10.1 构建（最新版本）。
+            - 基于 Qt 6.8.3 LTS 构建（稳定、长期支持）。
+            - 适用于 Ubuntu/Debian 等 Linux 发行版。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
