@@ -45,38 +45,43 @@ jobs:
           path: AdaptixC2
           ref: ${{ github.ref }}
 
-      # 🐧 Linux: 安装 Qt6 及其组件 (包含 declarative/QML 和 XKB)
-      - name: Install dependencies (Linux)
+      # 🐧 Linux: 仅安装系统底层库，Qt 由下一步统一安装
+      # 我们删除了 apt-get install qt6-*，因为系统自带的版本太老(6.4)，不支持 setColorScheme
+      - name: Install System Dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake qt6-base-dev qt6-declarative-dev qt6-websockets-dev qt6-tools-dev libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb-xkb-dev libxcb-icccm4-dev libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev libxcb-render0-dev libxcb-shape0-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev x11-xserver-utils
+          sudo apt-get install -y \
+            build-essential git cmake libssl-dev libgl1-mesa-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libxcb-xkb-dev libxcb-icccm4-dev libxcb-image0-dev \
+            libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-sync-dev \
+            libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev \
+            x11-xserver-utils
 
-      # 🪟 Windows: 安装 Qt 和 MinGW 工具链
-      - name: Install Qt (Windows)
-        if: matrix.os == 'windows-latest'
+      # 📦 统一安装 Qt 6.8.1 (Windows 和 Linux)
+      # 解决了 setColorScheme 在老版本不存在的问题
+      - name: Install Qt 6.8
         uses: jurplel/install-qt-action@v3
         with:
-          version: '6.5.3'
-          host: 'windows'
+          version: '6.8.1'           # 🟢 升级到 6.8.1 以支持 setColorScheme
+          host: ${{ matrix.os_name == 'windows' && 'windows' || 'linux' }}
           target: 'desktop'
-          arch: 'win64_mingw'
+          arch: ${{ matrix.os_name == 'windows' && 'win64_mingw' || 'gcc_64' }}
           dir: '${{ github.workspace }}/qt/'
           install-deps: 'true'
           modules: 'qtwebsockets'
-          tools: 'tools_mingw' # 必须安装，否则没有 gcc
+          tools: ${{ matrix.os_name == 'windows' && 'tools_mingw' || '' }}
 
-      # 🪟 Windows: 移除系统自带的 MinGW，避免与 Qt 的 MinGW 冲突
+      # 🪟 Windows: 环境清理 (保持不变)
       - name: Sanitize Windows Environment
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           if (Test-Path "C:\mingw64") {
             Rename-Item -Path "C:\mingw64" -NewName "C:\mingw64_disabled"
-            Write-Host "Disabled system MinGW at C:\mingw64 to avoid conflicts."
           }
-          Write-Host "Checking gcc path:"
-          Get-Command gcc | Select-Object -ExpandProperty Source
 
       - name: Configure CMake
         shell: bash
@@ -84,13 +89,14 @@ jobs:
           cd AdaptixC2/AdaptixClient
           
           if [ "${{ matrix.os_name }}" == "windows" ]; then
-             # Windows: 指定 MinGW 生成器
+             # Windows
              cmake -B build -G "${{ matrix.cmake_gen }}" \
                    -DCMAKE_BUILD_TYPE=Release \
                    -DCMAKE_MAKE_PROGRAM="mingw32-make"
           else
-             # Linux
-             cmake -B build -G "${{ matrix.cmake_gen }}" -DCMAKE_BUILD_TYPE=Release
+             # Linux (使用 install-qt-action 后，环境变量会自动配置好)
+             cmake -B build -G "${{ matrix.cmake_gen }}" \
+                   -DCMAKE_BUILD_TYPE=Release
           fi
 
       - name: Build AdaptixClient
@@ -110,7 +116,6 @@ jobs:
           fi
           
           mkdir -p release-package
-          # 直接拷贝二进制文件
           cp build/AdaptixClient release-package/ 2>/dev/null || true
           
           tar -czf AdaptixClient-${{ matrix.os_name }}-${VERSION}.tar.gz -C release-package .
@@ -134,12 +139,10 @@ jobs:
           
           if (Test-Path $exePath) {
             Copy-Item $exePath "release-package/"
-            # 自动部署 Qt 依赖 DLL
             windeployqt --release --no-translations --no-system-d3d-compiler "release-package/AdaptixClient.exe"
-            
             Compress-Archive -Path "release-package/*" -DestinationPath "AdaptixClient-windows-${VERSION}.zip"
           } else {
-            Write-Warning "AdaptixClient.exe not found, skipping packaging."
+            Write-Warning "AdaptixClient.exe not found"
           }
 
       - name: Upload release archives
@@ -194,7 +197,7 @@ jobs:
             ### 📥 下载列表
             | 平台 | 文件 | 说明 |
             |---|---|---|
-            | 🐧 Linux | `AdaptixClient-linux-${{ env.VERSION }}.tar.gz` | 需要安装 Qt6 |
+            | 🐧 Linux | `AdaptixClient-linux-${{ env.VERSION }}.tar.gz` | 解压即用 (Linux版构建于Qt 6.8) |
             | 🪟 Windows | `AdaptixClient-windows-${{ env.VERSION }}.zip` | 解压即用 (含依赖) |
             
             ### 校验和
