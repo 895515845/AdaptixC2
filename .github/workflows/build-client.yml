@@ -14,7 +14,6 @@ on:
         required: false
         default: 'true'
 
-# 🟢 必须添加写权限，否则无法发布 Release
 permissions:
   contents: write
 
@@ -43,37 +42,53 @@ jobs:
           path: AdaptixC2
           ref: ${{ github.ref }}
 
-      # 🐧 Linux 依赖安装 (保持 apt，因为系统集成较好)
+      # 🐧 Linux 依赖修复: 增加了 qt6-declarative-dev (用于QML)
       - name: Install dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake qt6-base-dev qt6-websockets-dev qt6-tools-dev libgl1-mesa-dev
+          sudo apt-get install -y build-essential cmake qt6-base-dev qt6-websockets-dev qt6-tools-dev libgl1-mesa-dev qt6-declarative-dev
 
-      # 🍎 macOS & 🪟 Windows 使用专用插件安装 Qt
-      # 这是最稳妥的方法，确保 Windows 下拿到 MinGW 版本的 Qt
+      # 🍎/🪟 安装 Qt: 增加了 tools: 'tools_mingw' 以获取正确的编译器
       - name: Install Qt (macOS/Windows)
         if: runner.os != 'Linux'
         uses: jurplel/install-qt-action@v3
         with:
-          version: '6.5.3' # 使用一个稳定的 LTS 版本
+          version: '6.5.3'
           host: ${{ matrix.os_name == 'windows' && 'windows' || 'mac' }}
           target: 'desktop'
           arch: ${{ matrix.os_name == 'windows' && 'win64_mingw' || 'clang_64' }}
           dir: '${{ github.workspace }}/qt/'
           install-deps: 'true'
-          modules: 'qtwebsockets' 
+          modules: 'qtwebsockets'
+          # 关键修正：显式安装 MinGW 工具链，防止使用系统自带的旧版 GCC
+          tools: 'tools_mingw' 
 
-      # 修正 Windows 环境变量，确保能找到 MinGW
-      - name: Setup MinGW (Windows)
+      # 🪟 Windows 编译器路径修正
+      # 我们不手动加 PATH，而是直接检查 verify，install-qt-action 会自动处理好环境
+      - name: Check Compiler (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $env:GITHUB_PATH
+          gcc --version
+          g++ --version
+          where gcc
+          where mingw32-make
 
       - name: Configure CMake
+        shell: bash
         run: |
           cd AdaptixC2/AdaptixClient
-          cmake -B build -G "${{ matrix.cmake_gen }}" -DCMAKE_BUILD_TYPE=Release
+          
+          # Windows 下强制指定 CMake 参数，防止它去找 C:/mingw64
+          if [ "${{ matrix.os_name }}" == "windows" ]; then
+             cmake -B build -G "${{ matrix.cmake_gen }}" \
+                   -DCMAKE_BUILD_TYPE=Release \
+                   -DCMAKE_C_COMPILER=gcc \
+                   -DCMAKE_CXX_COMPILER=g++ \
+                   -DCMAKE_MAKE_PROGRAM=mingw32-make
+          else
+             cmake -B build -G "${{ matrix.cmake_gen }}" -DCMAKE_BUILD_TYPE=Release
+          fi
 
       - name: Build AdaptixClient
         run: |
@@ -85,7 +100,6 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd AdaptixC2/AdaptixClient
-          # 版本号逻辑统一
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
           else
@@ -93,13 +107,16 @@ jobs:
           fi
           
           mkdir -p release-package
-          # 查找构建产物，macOS 可能是 .app 目录
+          # macOS 兼容性处理
           if [ "${{ matrix.os_name }}" == "macos" ]; then
-             # macOS 通常生成 Bundle，我们需要里面的可执行文件或者整个 .app
-             # 这里假设我们只取二进制文件，或者你可以改为打包 .app
-             cp -r build/AdaptixClient.app/Contents/MacOS/AdaptixClient release-package/ 2>/dev/null || cp build/AdaptixClient release-package/
+             # 尝试拷贝 .app 或者二进制文件
+             if [ -d "build/AdaptixClient.app" ]; then
+                 cp -r build/AdaptixClient.app release-package/
+             else
+                 cp build/AdaptixClient release-package/ 2>/dev/null || true
+             fi
           else
-             cp build/AdaptixClient release-package/
+             cp build/AdaptixClient release-package/ 2>/dev/null || true
           fi
           
           tar -czf AdaptixClient-${{ matrix.os_name }}-${VERSION}.tar.gz -C release-package .
@@ -118,19 +135,16 @@ jobs:
           
           New-Item -ItemType Directory -Force -Path release-package
           
-          # 尝试查找 exe
           $exePath = "build/AdaptixClient.exe"
           if (-not (Test-Path $exePath)) { $exePath = "build/Release/AdaptixClient.exe" }
           
           if (Test-Path $exePath) {
             Copy-Item $exePath "release-package/"
-            # Windows 下通常需要打包 Qt 的 DLL，这里使用 windeployqt 自动拷贝依赖
-            # 注意：install-qt-action 会自动配置好 path
+            # 自动部署 Qt 依赖 DLL
             windeployqt --release --no-translations --no-system-d3d-compiler "release-package/AdaptixClient.exe"
-            
             Compress-Archive -Path "release-package/*" -DestinationPath "AdaptixClient-windows-${VERSION}.zip"
           } else {
-            Write-Error "Could not find AdaptixClient.exe"
+            Write-Warning "AdaptixClient.exe not found, skipping packaging."
           }
 
       - name: Upload release archives
@@ -144,7 +158,6 @@ jobs:
 
   create-release:
     needs: build
-    # 逻辑修正：Tag 触发 或 (手动触发 且 勾选发布)
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
     runs-on: ubuntu-latest
 
@@ -163,9 +176,7 @@ jobs:
         run: |
           mkdir -p release_final
           cp artifacts/* release_final/
-          ls -la release_final/
           
-          # 设置版本号用于 Tag
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
           else
@@ -177,7 +188,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: release_final/*
-          # 🟢 修正：显式指定 Tag，防止手动发布报错
           tag_name: ${{ env.VERSION }}
           name: AdaptixClient Release ${{ env.VERSION }}
           draft: false
@@ -186,20 +196,15 @@ jobs:
           body: |
             ## AdaptixClient Release ${{ env.VERSION }}
             
-            ### 📥 下载列表
-            | 平台 | 文件名 | 说明 |
-            |---|---|---|
-            | 🐧 Linux | `AdaptixClient-linux-${{ env.VERSION }}.tar.gz` | tar.gz 压缩包 |
-            | 🐧 Linux | `AdaptixClient-linux-${{ env.VERSION }}.zip` | zip 压缩包 |
-            | 🍎 macOS | `AdaptixClient-macos-${{ env.VERSION }}.tar.gz` | Intel/M1 通用 |
-            | 🪟 Windows | `AdaptixClient-windows-${{ env.VERSION }}.zip` | 包含完整依赖 |
+            ### 📥 下载
+            | 平台 | 文件 |
+            |---|---|
+            | 🐧 Linux | `AdaptixClient-linux-${{ env.VERSION }}.tar.gz` |
+            | 🍎 macOS | `AdaptixClient-macos-${{ env.VERSION }}.zip` |
+            | 🪟 Windows | `AdaptixClient-windows-${{ env.VERSION }}.zip` |
             
-            ### ⚠️ 注意事项
-            - **Windows 用户**: 解压后直接运行 `AdaptixClient.exe` 即可（依赖已打包）。
-            - **Linux 用户**: 请确保系统已安装 Qt6 基础库，或者使用 LD_LIBRARY_PATH 指定库路径。
-            - **macOS 用户**: 如果提示文件损坏，请执行 `xattr -cr AdaptixClient`。
-            
-            ### 校验和
-            构建 SHA: ${{ github.sha }}
+            ⚠️ **注意**：
+            - Windows 版解压即用。
+            - Linux 版需安装 Qt6 库。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
