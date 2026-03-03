@@ -71,18 +71,15 @@ void DialogListener::createUI()
     cardWidget->setFocusPolicy(Qt::NoFocus);
 
     buttonNewProfile = new QPushButton(this);
-    buttonNewProfile->setProperty("ButtonStyle", "dialog");
     buttonNewProfile->setText("New Profile");
     buttonNewProfile->setMinimumSize(QSize(10, 30));
 
     buttonLoad = new QPushButton(QIcon(":/icons/file_open"), "", this);
-    buttonLoad->setProperty("ButtonStyle", "dialog");
     buttonLoad->setIconSize(QSize(20, 20));
     buttonLoad->setFixedSize(QSize(30, 30));
     buttonLoad->setToolTip("Load profile from file");
 
     buttonSave = new QPushButton(QIcon(":/icons/save_as"), "", this);
-    buttonSave->setProperty("ButtonStyle", "dialog");
     buttonSave->setIconSize(QSize(20, 20));
     buttonSave->setFixedSize(QSize(30, 30));
     buttonSave->setToolTip("Save profile to file");
@@ -107,10 +104,11 @@ void DialogListener::createUI()
 
     listenerConfigGroupbox = new QGroupBox(this);
     listenerConfigGroupbox->setTitle("Listener config");
+    listenerConfigGroupbox->setAlignment(Qt::AlignHCenter);
     listenerConfigGroupbox->setLayout(stackGridLayout);
 
     buttonCreate = new QPushButton(this);
-    buttonCreate->setProperty("ButtonStyle", "dialog_apply");
+    buttonCreate->setDefault(true);
     buttonCreate->setText("Create");
     buttonCreate->setFixedWidth(160);
     buttonCreate->setFocus();
@@ -158,7 +156,6 @@ void DialogListener::createUI()
     auto separatorLine = new QFrame(this);
     separatorLine->setFrameShape(QFrame::VLine);
     separatorLine->setFrameShadow(QFrame::Sunken);
-    separatorLine->setStyleSheet("QFrame { color: rgba(100, 100, 100, 50); background-color: rgba(100, 100, 100, 50); }");
 
     mainGridLayout = new QGridLayout(this);
     mainGridLayout->setContentsMargins(5, 5, 5, 5);
@@ -272,18 +269,24 @@ void DialogListener::onButtonCreate()
     buttonCreate->setEnabled(false);
     buttonCreate->setText(editMode ? "Editing..." : "Creating...");
 
-    auto callback = [this, configName, configType, configData, profileName, shouldSaveProfile](bool success, const QString &message, const QJsonObject&) {
+    bool isEditMode = editMode;
+    QPointer<DialogListener> safeThis = this;
+
+    auto callback = [safeThis, isEditMode, configName, configType, configData, profileName, shouldSaveProfile](bool success, const QString &message, const QJsonObject&) {
         if (!success) {
             MessageError(message);
-            buttonCreate->setEnabled(true);
-            buttonCreate->setText(editMode ? "Edit" : "Create");
-        } else {
-            if (shouldSaveProfile) {
-                saveProfile(profileName, configName, configType, configData);
-                loadProfiles();
+            if (safeThis) {
+                safeThis->buttonCreate->setEnabled(true);
+                safeThis->buttonCreate->setText(isEditMode ? "Edit" : "Create");
             }
-
-            this->close();
+        } else {
+            if (safeThis) {
+                if (shouldSaveProfile) {
+                    safeThis->saveProfile(profileName, configName, configType, configData);
+                    safeThis->loadProfiles();
+                }
+                safeThis->close();
+            }
         }
     };
 
@@ -308,8 +311,10 @@ void DialogListener::saveProfile(const QString &profileName, const QString &conf
 void DialogListener::onButtonLoad()
 {
     QString baseDir = authProfile.GetProjectDir();
+    QPointer<DialogListener> safeThis = this;
+
     NonBlockingDialogs::getOpenFileName(this, "Select file", baseDir, "JSON files (*.json)",
-        [this](const QString& filePath) {
+        [safeThis](const QString& filePath) {
             if (filePath.isEmpty())
                 return;
 
@@ -337,21 +342,24 @@ void DialogListener::onButtonLoad()
                 return;
             }
 
+            if (!safeThis)
+                return;
+
             if( jsonObject.contains("name") && jsonObject["name"].isString())
-                inputListenerName->setText( jsonObject["name"].toString() );
+                safeThis->inputListenerName->setText( jsonObject["name"].toString() );
 
             QString configType = jsonObject["type"].toString();
-            int typeIndex = listenerCombobox->findText( configType );
+            int typeIndex = safeThis->listenerCombobox->findText( configType );
 
-            if(typeIndex == -1 || !ax_uis.contains(configType)) {
+            if(typeIndex == -1 || !safeThis->ax_uis.contains(configType)) {
                 MessageError("No such listener exists");
                 return;
             }
 
             QString configData = jsonObject["config"].toString();
-            listenerCombobox->setCurrentIndex(typeIndex);
+            safeThis->listenerCombobox->setCurrentIndex(typeIndex);
 
-            ax_uis[configType].container->fromJson(configData);
+            safeThis->ax_uis[configType].container->fromJson(configData);
     });
 }
 

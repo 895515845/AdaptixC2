@@ -111,6 +111,59 @@ QVector<AuthProfile> Storage::ListProjects()
                                 json["port"].toString(),
                                 json["endpoint"].toString(),
                                 json["projectDir"].toString());
+
+            if (json.contains("subscriptions")) {
+                QStringList subs;
+                for (const auto &v : json["subscriptions"].toArray())
+                    subs.append(v.toString());
+
+                if (subs.contains("chat")) {
+                    subs.removeAll("chat");
+                    subs.append("chat_history");
+                    subs.append("chat_realtime");
+                }
+                if (subs.contains("downloads")) {
+                    subs.removeAll("downloads");
+                    subs.append("downloads_history");
+                    subs.append("downloads_realtime");
+                }
+                if (subs.contains("screenshots")) {
+                    subs.removeAll("screenshots");
+                    subs.append("screenshot_history");
+                    subs.append("screenshot_realtime");
+                }
+                if (subs.contains("credentials")) {
+                    subs.removeAll("credentials");
+                    subs.append("credentials_history");
+                    subs.append("credentials_realtime");
+                }
+                if (subs.contains("targets")) {
+                    subs.removeAll("targets");
+                    subs.append("targets_history");
+                    subs.append("targets_realtime");
+                }
+                if (subs.contains("tasks_only_active")) {
+                    subs.removeAll("tasks_only_active");
+                    subs.append("tasks_only_jobs");
+                }
+
+                profile.SetSubscriptions(subs);
+            } else {
+                profile.SetSubscriptions({
+                    "chat_history", "chat_realtime",
+                    "downloads_history", "downloads_realtime",
+                    "screenshot_history", "screenshot_realtime",
+                    "credentials_history", "credentials_realtime",
+                    "targets_history", "targets_realtime",
+                    "notifications", "tunnels",
+                    "agents_only_active",
+                    "console_history",
+                    "tasks_history",
+                    "tasks_manager"
+                });
+            }
+            profile.SetConsoleMultiuser(json.value("consoleMultiuser").toBool(true));
+
             list.push_back(profile);
         }
     }
@@ -141,6 +194,8 @@ void Storage::AddProject(AuthProfile profile)
     json["username"]   = profile.GetUsername();
     json["password"]   = profile.GetPassword();
     json["projectDir"] = profile.GetProjectDir();
+    json["subscriptions"] = QJsonArray::fromStringList(profile.GetSubscriptions());
+    json["consoleMultiuser"] = profile.GetConsoleMultiuser();
     QString data = QJsonDocument(json).toJson(QJsonDocument::Compact);
 
     QSqlQuery query;
@@ -160,6 +215,8 @@ void Storage::UpdateProject(AuthProfile profile)
     json["username"]   = profile.GetUsername();
     json["password"]   = profile.GetPassword();
     json["projectDir"] = profile.GetProjectDir();
+    json["subscriptions"] = QJsonArray::fromStringList(profile.GetSubscriptions());
+    json["consoleMultiuser"] = profile.GetConsoleMultiuser();
     QString data = QJsonDocument(json).toJson(QJsonDocument::Compact);
 
     QSqlQuery query;
@@ -252,10 +309,14 @@ void Storage::SelectSettingsMain(SettingsData* settingsData)
         QJsonDocument doc  = QJsonDocument::fromJson(data.toUtf8());
         QJsonObject   json = doc.object();
 
-        settingsData->MainTheme   = json["theme"].toString();
-        settingsData->FontFamily  = json["fontFamily"].toString();
-        settingsData->FontSize    = json["fontSize"].toInt();
-        settingsData->ConsoleTime = json["consoleTime"].toBool();
+        if (json.contains("theme") && !json["theme"].toString().isEmpty())
+            settingsData->MainTheme   = json["theme"].toString();
+        if (json.contains("fontFamily") && !json["fontFamily"].toString().isEmpty())
+            settingsData->FontFamily  = json["fontFamily"].toString();
+        if (json.contains("fontSize") && json["fontSize"].toInt() > 0)
+            settingsData->FontSize    = json["fontSize"].toInt();
+        if (json.contains("consoleTime"))
+            settingsData->ConsoleTime = json["consoleTime"].toBool();
     }
 }
 
@@ -288,16 +349,21 @@ void Storage::SelectSettingsConsole(SettingsData* settingsData)
         settingsData->ConsoleBufferSize        = json["consoleBuffer"].toInt();
         settingsData->ConsoleNoWrap            = json["noWrap"].toBool();
         settingsData->ConsoleAutoScroll        = json["autoScroll"].toBool();
+        settingsData->ConsoleShowBackground    = json.contains("showBackground") ? json["showBackground"].toBool() : true;
+        if (json.contains("consoleTheme"))
+            settingsData->ConsoleTheme = json["consoleTheme"].toString();
     }
 }
 
 void Storage::UpdateSettingsConsole(const SettingsData &settingsData)
 {
     QJsonObject json;
-    json["terminalBuffer"] = settingsData.RemoteTerminalBufferSize;
-    json["consoleBuffer"]  = settingsData.ConsoleBufferSize;
-    json["noWrap"]         = settingsData.ConsoleNoWrap;
-    json["autoScroll"]     = settingsData.ConsoleAutoScroll;
+    json["terminalBuffer"]  = settingsData.RemoteTerminalBufferSize;
+    json["consoleBuffer"]   = settingsData.ConsoleBufferSize;
+    json["noWrap"]          = settingsData.ConsoleNoWrap;
+    json["autoScroll"]      = settingsData.ConsoleAutoScroll;
+    json["showBackground"]  = settingsData.ConsoleShowBackground;
+    json["consoleTheme"]    = settingsData.ConsoleTheme;
     QString data = QJsonDocument(json).toJson(QJsonDocument::Compact);
 
     QSqlQuery query;
@@ -323,6 +389,10 @@ void Storage::SelectSettingsSessions(SettingsData* settingsData)
         QJsonArray columns = json["columns"].toArray();
         for (int i = 0; i < 16 && i < columns.size(); i++)
             settingsData->SessionsTableColumns[i] = columns[i].toBool();
+
+        QJsonArray columnOrder = json["columnOrder"].toArray();
+        for (int i = 0; i < 16 && i < columnOrder.size(); i++)
+            settingsData->SessionsColumnOrder[i] = columnOrder[i].toInt();
     }
 }
 
@@ -332,11 +402,16 @@ void Storage::UpdateSettingsSessions(const SettingsData &settingsData)
     for (int i = 0 ; i < 16; i++)
         columns.append(settingsData.SessionsTableColumns[i]);
 
+    QJsonArray columnOrder;
+    for (int i = 0 ; i < 16; i++)
+        columnOrder.append(settingsData.SessionsColumnOrder[i]);
+
     QJsonObject json;
-    json["healthCheck"]  = settingsData.CheckHealth;
-    json["healthCoaf"]   = settingsData.HealthCoaf;
-    json["healthOffset"] = settingsData.HealthOffset;
-    json["columns"]      = columns;
+    json["healthCheck"]   = settingsData.CheckHealth;
+    json["healthCoaf"]    = settingsData.HealthCoaf;
+    json["healthOffset"]  = settingsData.HealthOffset;
+    json["columns"]       = columns;
+    json["columnOrder"]   = columnOrder;
     QString data = QJsonDocument(json).toJson(QJsonDocument::Compact);
 
     QSqlQuery query;
